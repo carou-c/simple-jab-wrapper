@@ -1,7 +1,6 @@
 use crate::bindings::AccessibleContextInfo;
 use crate::jab_api::JabApi;
 use crate::protocol::*;
-use serde_json::json;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -50,7 +49,7 @@ impl JabServer {
                     let resp_str = serde_json::to_string(&response).unwrap_or_else(|_| {
                         serde_json::to_string(&Response {
                             id: 0,
-                            result: json!(null),
+                            value: None,
                             error: Some("Serialization error".to_string()),
                         })
                         .unwrap()
@@ -74,66 +73,62 @@ impl JabServer {
             Err(e) => {
                 return Response {
                     id: 0,
-                    result: json!(null),
+                    value: None,
                     error: Some(format!("Invalid JSON: {}", e)),
                 };
             }
         };
 
-        let result = match request.method.as_str() {
-            "list_windows" => self.list_windows(),
-            "select_window" => self.select_window(&request.params),
-            "find_elements" => self.find_elements(&request.params),
-            "click_element" => self.click_element(&request.params),
-            "type_text" => self.type_text(&request.params),
-            "get_element_text" => self.get_element_text(&request.params),
-            "get_version_info" => self.get_version_info(),
-            _ => Err(format!("Unknown method: {}", request.method)),
+        let id = request.id;
+        let result = match request.method {
+            RpcMethod::SelectWindow(params) => self.select_window(params),
+            RpcMethod::FindElements(params) => self.find_elements(params),
+            RpcMethod::ClickElement(params) => self.click_element(params),
+            RpcMethod::TypeText(params) => self.type_text(params),
+            RpcMethod::GetElementText(params) => self.get_element_text(params),
+            RpcMethod::GetVersionInfo => self.get_version_info(),
+            RpcMethod::ListWindows => self.list_windows(),
         };
 
         match result {
-            Ok(val) => Response {
-                id: request.id,
-                result: val,
+            Ok(value) => Response {
+                id,
+                value: Some(value),
                 error: None,
             },
             Err(err) => Response {
-                id: request.id,
-                result: json!(null),
+                id,
+                value: None,
                 error: Some(err),
             },
         }
     }
 
-    fn list_windows(&self) -> Result<serde_json::Value, String> {
-        Ok(json!([]))
+    fn list_windows(&self) -> Result<ResponseValue, String> {
+        Ok(ResponseValue::ListWindows(ListWindowsValue {
+            windows: Vec::new(),
+        }))
     }
 
-    fn select_window(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let hwnd = params
-            .get("hwnd")
-            .and_then(|v| v.as_u64())
-            .ok_or("Missing hwnd parameter")?;
-
+    fn select_window(&self, params: SelectWindowParams) -> Result<ResponseValue, String> {
         let api = self.api.lock().unwrap();
-        match api.get_context_from_hwnd(hwnd) {
+        match api.get_context_from_hwnd(params.hwnd) {
             Some((vm_id, ac)) => {
                 let mut vm = self.current_vm_id.lock().unwrap();
                 let mut root = self.current_root.lock().unwrap();
                 *vm = Some(vm_id);
                 *root = Some(ac);
-                Ok(json!({"status": "ok", "vm_id": vm_id}))
+                Ok(ResponseValue::SelectWindow(SelectWindowValue {
+                    status: "ok".to_string(),
+                    vm_id,
+                }))
             }
             None => Err("Failed to get context from HWND".to_string()),
         }
     }
 
-    fn find_elements(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let locator_str = params
-            .get("locator")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing locator parameter")?;
-        let locator = Locator::parse(locator_str).ok_or("Invalid locator format")?;
+    fn find_elements(&self, params: FindElementsParams) -> Result<ResponseValue, String> {
+        let locator = Locator::parse(&params.locator).ok_or("Invalid locator format")?;
 
         let (vm_id, root) = {
             let vm = self.current_vm_id.lock().unwrap();
@@ -161,19 +156,19 @@ impl JabServer {
                     states.as_deref(),
                 )
             {
-                results.push(json!({
-                    "context": ac,
-                    "name": name,
-                    "role": role,
-                    "description": description,
-                    "states": states,
-                    "x": info.x,
-                    "y": info.y,
-                    "width": info.width,
-                    "height": info.height,
-                    "index_in_parent": info.indexInParent,
-                    "children_count": info.childrenCount,
-                }));
+                results.push(ElementInfo {
+                    context: ac,
+                    name,
+                    role,
+                    description,
+                    states,
+                    x: info.x,
+                    y: info.y,
+                    width: info.width,
+                    height: info.height,
+                    index_in_parent: info.indexInParent,
+                    children_count: info.childrenCount,
+                });
             }
 
             true
@@ -181,57 +176,44 @@ impl JabServer {
 
         api.traverse_tree(vm_id, root, 0, 50, &mut callback);
 
-        Ok(json!(results))
+        Ok(ResponseValue::FindElements(FindElementsValue {
+            elements: results,
+        }))
     }
 
-    fn click_element(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let context = params
-            .get("context")
-            .and_then(|v| v.as_u64())
-            .ok_or("Missing context parameter")?;
-
+    fn click_element(&self, params: ClickElementParams) -> Result<ResponseValue, String> {
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
         if let Some(vm_id) = *vm {
-            api.request_focus(vm_id, context);
-            api.do_action(vm_id, context, "click");
-            Ok(json!({"status": "clicked"}))
+            api.request_focus(vm_id, params.context);
+            api.do_action(vm_id, params.context, "click");
+            Ok(ResponseValue::ClickElement(ClickElementValue {
+                status: "clicked".to_string(),
+            }))
         } else {
             Err("No window selected".to_string())
         }
     }
 
-    fn type_text(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let context = params
-            .get("context")
-            .and_then(|v| v.as_u64())
-            .ok_or("Missing context parameter")?;
-        let text = params
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or("Missing text parameter")?;
-
+    fn type_text(&self, params: TypeTextParams) -> Result<ResponseValue, String> {
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
         if let Some(vm_id) = *vm {
-            api.set_text(vm_id, context, text);
-            Ok(json!({"status": "text set"}))
+            api.set_text(vm_id, params.context, &params.text);
+            Ok(ResponseValue::TypeText(TypeTextValue {
+                status: "text set".to_string(),
+            }))
         } else {
             Err("No window selected".to_string())
         }
     }
 
-    fn get_element_text(&self, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-        let context = params
-            .get("context")
-            .and_then(|v| v.as_u64())
-            .ok_or("Missing context parameter")?;
-
+    fn get_element_text(&self, params: GetElementTextParams) -> Result<ResponseValue, String> {
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
         if let Some(vm_id) = *vm {
-            match api.get_text_range(vm_id, context, 0, 1024) {
-                Some(text) => Ok(json!({"text": text})),
+            match api.get_text_range(vm_id, params.context, 0, 1024) {
+                Some(text) => Ok(ResponseValue::GetElementText(GetElementTextValue { text })),
                 None => Err("Failed to get text".to_string()),
             }
         } else {
@@ -239,8 +221,10 @@ impl JabServer {
         }
     }
 
-    fn get_version_info(&self) -> Result<serde_json::Value, String> {
-        Ok(json!({"version": "1.0"}))
+    fn get_version_info(&self) -> Result<ResponseValue, String> {
+        Ok(ResponseValue::VersionInfo(VersionInfoValue {
+            version: "1.0".to_string(),
+        }))
     }
 }
 

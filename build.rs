@@ -37,7 +37,8 @@ fn main() {
         .clang_arg(format!("-I{}/include", JAVA_HOME))
         .clang_arg(format!("-I{}/include/linux", JAVA_HOME))
         .clang_arg("-Wno-everything")
-        .blocklist_type("_LONGDOUBLE");
+        .blocklist_type("_LONGDOUBLE")
+        .allowlist_file("native/.*\\.h");
         // .clang_arg(format!("--target={}", target))
         // .clang_arg("--sysroot=/usr/i686-w64-mingw32")
         // .clang_arg("-I/usr/i686-w64-mingw32/include")

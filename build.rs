@@ -6,12 +6,14 @@ const JAVA_HOME: &str = "/usr/lib/jvm/java-8-openjdk";
 fn main() {
     // 1. Compile the C code
     cc::Build::new()
+        .cpp(true)
         .prefer_clang_cl_over_msvc(true)
         .warnings(false)
-        .file("native/AccessBridgeCalls.c")
         .include(format!("{}/include", JAVA_HOME))
         .include(format!("{}/include/linux", JAVA_HOME))
         .include("native") // for headers
+        .file("native/AccessBridgeCalls.c")
+        .file("native/AccessBridgeDebug.cpp")
         .compile("accessbridgecalls"); // produces libaccessbridgecalls.a
 
     // 2. Tell cargo to rerun if headers, C src, or build.rs change
@@ -20,6 +22,7 @@ fn main() {
     println!("cargo:rerun-if-changed=native/AccessBridgeCallbacks.h");
     println!("cargo:rerun-if-changed=native/AccessBridgeCalls.h");
     println!("cargo:rerun-if-changed=native/wrapper.h");
+    println!("cargo:rerun-if-changed=native/AccessBridgeDebug.cpp");
     println!("cargo:rerun-if-changed=native/AccessBridgeCalls.c");
     println!("cargo:rerun-if-changed=build.rs");
 

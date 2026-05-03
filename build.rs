@@ -7,31 +7,43 @@ fn main() {
     // 1. Compile the C code
     cc::Build::new()
         .prefer_clang_cl_over_msvc(true)
+        .warnings(false)
         .file("native/AccessBridgeCalls.c")
         .include(format!("{}/include", JAVA_HOME))
         .include(format!("{}/include/linux", JAVA_HOME))
         .include("native") // for headers
         .compile("accessbridgecalls"); // produces libaccessbridgecalls.a
 
-    // 2. Tell cargo to rerun if headers change
+    // 2. Tell cargo to rerun if headers, C src, or build.rs change
     println!("cargo:rerun-if-changed=native/AccessBridgeDebug.h");
     println!("cargo:rerun-if-changed=native/AccessBridgePackages.h");
     println!("cargo:rerun-if-changed=native/AccessBridgeCallbacks.h");
     println!("cargo:rerun-if-changed=native/AccessBridgeCalls.h");
     println!("cargo:rerun-if-changed=native/wrapper.h");
     println!("cargo:rerun-if-changed=native/AccessBridgeCalls.c");
+    println!("cargo:rerun-if-changed=build.rs");
+
+    // let target = std::env::var("TARGET").unwrap();
+    // println!("{}", target);
+    // unsafe {
+    //     std::env::set_var("LIBCLANG_PATH", "/usr/i686-w64-mingw32/bin");
+    // }
 
     // 3. Generate bindings
-    let bindings = bindgen::Builder::default()
+    let builder = bindgen::Builder::default()
         .header("native/wrapper.h")
-        // Optional but recommended:
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
-        // If your headers include others:
         .clang_arg("-Inative")
         .clang_arg(format!("-I{}/include", JAVA_HOME))
         .clang_arg(format!("-I{}/include/linux", JAVA_HOME))
-        .generate()
-        .expect("Unable to generate bindings");
+        .clang_arg("-Wno-everything")
+        .blocklist_type("_LONGDOUBLE");
+        // .clang_arg(format!("--target={}", target))
+        // .clang_arg("--sysroot=/usr/i686-w64-mingw32")
+        // .clang_arg("-I/usr/i686-w64-mingw32/include")
+        // .clang_arg("-L/usr/i686-w64-mingw32/lib");
+
+    let bindings = builder.generate().expect("Unable to generate bindings");
 
     // 4. Write bindings to OUT_DIR
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());

@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package jab_wrapper;
+
+service JabService {
+  rpc SelectWindow(SelectWindowRequest) returns (SelectWindowResponse);
+  rpc FindElements(FindElementsRequest) returns (FindElementsResponse);
+  rpc ClickElement(ClickElementRequest) returns (ClickElementResponse);
+  rpc TypeText(TypeTextRequest) returns (TypeTextResponse);
+  rpc GetElementText(GetElementTextRequest) returns (GetElementTextResponse);
+  rpc GetVersionInfo(GetVersionInfoRequest) returns (GetVersionInfoResponse);
+  rpc ListWindows(ListWindowsRequest) returns (ListWindowsResponse);
+}
+
+message ElementLocator {
+  string role = 1;
+  string name = 2;
+  string description = 3;
+  repeated string states = 4;
+  bool strict = 5;
+}
+
+message ElementInfo {
+  uint64 context = 1;
+  string name = 2;
+  string role = 3;
+  string description = 4;
+  string states = 5;
+  int32 x = 6;
+  int32 y = 7;
+  int32 width = 8;
+  int32 height = 9;
+  int32 index_in_parent = 10;
+  int32 children_count = 11;
+}
+
+message SelectWindowRequest {
+  uint64 hwnd = 1;
+}
+
+message SelectWindowResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message FindElementsRequest {
+  ElementLocator locator = 1;
+  int32 max_depth = 2;
+}
+
+message FindElementsResponse {
+  repeated ElementInfo elements = 1;
+  string error = 2;
+}
+
+message ClickElementRequest {
+  uint64 context = 1;
+}
+
+message ClickElementResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message TypeTextRequest {
+  uint64 context = 1;
+  string text = 2;
+}
+
+message TypeTextResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetElementTextRequest {
+  uint64 context = 1;
+}
+
+message GetElementTextResponse {
+  string text = 1;
+  string error = 2;
+}
+
+message GetVersionInfoRequest {}
+
+message GetVersionInfoResponse {
+  string version = 1;
+}
+
+message ListWindowsRequest {}
+
+message ListWindowsResponse {
+  repeated WindowInfo windows = 1;
+}
+
+message WindowInfo {
+  uint64 hwnd = 1;
+  string title = 2;
+}

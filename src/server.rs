@@ -1,11 +1,11 @@
-use crate::bindings::AccessibleContextInfo;
 use crate::jab_api::JabApi;
-use crate::protocol::*;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use crate::jab_wrapper::jab_service_server::{JabService, JabServiceServer};
+use crate::jab_wrapper::*;
+use crate::protocol::Locator;
+use crate::types::element_info_to_proto;
 use std::sync::{Arc, Mutex};
+use tonic::{Request, Response, Status};
 
-#[derive(Debug)]
 pub struct JabServer {
     api: Arc<Mutex<JabApi>>,
     current_vm_id: Arc<Mutex<Option<i32>>>,
@@ -21,148 +21,90 @@ impl JabServer {
         }
     }
 
-    pub fn run(&self, port: u16) {
-        let addr = format!("127.0.0.1:{}", port);
-        let listener = TcpListener::bind(&addr).expect("Failed to bind TCP socket");
-        println!("JAB Server listening on {}", addr);
-
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    println!("Client connected");
-                    self.handle_client(stream);
-                    println!("Client disconnected");
-                }
-                Err(e) => eprintln!("Connection failed: {}", e),
-            }
-        }
+    pub fn into_service(self) -> JabServiceServer<Self> {
+        JabServiceServer::new(self)
     }
+}
 
-    fn handle_client(&self, stream: TcpStream) {
-        let mut reader = BufReader::new(stream);
-
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {
-                    let response = self.process_request(line.trim());
-                    let resp_str = serde_json::to_string(&response).unwrap_or_else(|_| {
-                        serde_json::to_string(&Response {
-                            id: 0,
-                            value: None,
-                            error: Some("Serialization error".to_string()),
-                        })
-                        .unwrap()
-                    });
-                    if let Err(e) = writeln!(reader.get_mut(), "{}", resp_str) {
-                        eprintln!("Write error: {}", e);
-                        break;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Read error: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    fn process_request(&self, line: &str) -> Response {
-        let request: Request = match serde_json::from_str(line) {
-            Ok(req) => req,
-            Err(e) => {
-                return Response {
-                    id: 0,
-                    value: None,
-                    error: Some(format!("Invalid JSON: {}", e)),
-                };
-            }
-        };
-
-        let id = request.id;
-        let result = match request.method {
-            RpcMethod::SelectWindow(params) => self.select_window(params),
-            RpcMethod::FindElements(params) => self.find_elements(params),
-            RpcMethod::ClickElement(params) => self.click_element(params),
-            RpcMethod::TypeText(params) => self.type_text(params),
-            RpcMethod::GetElementText(params) => self.get_element_text(params),
-            RpcMethod::GetVersionInfo => self.get_version_info(),
-            RpcMethod::ListWindows => self.list_windows(),
-        };
-
-        match result {
-            Ok(value) => Response {
-                id,
-                value: Some(value),
-                error: None,
-            },
-            Err(err) => Response {
-                id,
-                value: None,
-                error: Some(err),
-            },
-        }
-    }
-
-    fn list_windows(&self) -> Result<ResponseValue, String> {
-        Ok(ResponseValue::ListWindows(ListWindowsValue {
-            windows: Vec::new(),
-        }))
-    }
-
-    fn select_window(&self, params: SelectWindowParams) -> Result<ResponseValue, String> {
+#[tonic::async_trait]
+impl JabService for JabServer {
+    async fn select_window(
+        &self,
+        request: Request<SelectWindowRequest>,
+    ) -> Result<Response<SelectWindowResponse>, Status> {
+        let req = request.into_inner();
         let api = self.api.lock().unwrap();
-        match api.get_context_from_hwnd(params.hwnd) {
+
+        match api.get_context_from_hwnd(req.hwnd) {
             Some((vm_id, ac)) => {
                 let mut vm = self.current_vm_id.lock().unwrap();
                 let mut root = self.current_root.lock().unwrap();
                 *vm = Some(vm_id);
                 *root = Some(ac);
-                Ok(ResponseValue::SelectWindow(SelectWindowValue {
-                    status: "ok".to_string(),
-                    vm_id,
+                Ok(Response::new(SelectWindowResponse {
+                    success: true,
+                    error: String::new(),
                 }))
             }
-            None => Err("Failed to get context from HWND".to_string()),
+            None => Ok(Response::new(SelectWindowResponse {
+                success: false,
+                error: "Failed to get context from HWND".to_string(),
+            })),
         }
     }
 
-    fn find_elements(&self, params: FindElementsParams) -> Result<ResponseValue, String> {
-        let locator = Locator::parse(&params.locator).ok_or("Invalid locator format")?;
+    async fn find_elements(
+        &self,
+        request: Request<FindElementsRequest>,
+    ) -> Result<Response<FindElementsResponse>, Status> {
+        let req = request.into_inner();
+        let locator_proto = req.locator.unwrap_or_default();
+        let locator = Locator::from_parts(
+            if locator_proto.role.is_empty() { None } else { Some(locator_proto.role) },
+            if locator_proto.name.is_empty() { None } else { Some(locator_proto.name) },
+            if locator_proto.description.is_empty() { None } else { Some(locator_proto.description) },
+            if locator_proto.states.is_empty() { None } else { Some(locator_proto.states.join(",")) },
+            locator_proto.strict,
+        );
 
         let (vm_id, root) = {
             let vm = self.current_vm_id.lock().unwrap();
             let root = self.current_root.lock().unwrap();
             match (*vm, *root) {
                 (Some(vm), Some(r)) => (vm, r),
-                _ => return Err("No window selected".to_string()),
+                _ => {
+                    return Ok(Response::new(FindElementsResponse {
+                        elements: Vec::new(),
+                        error: "No window selected".to_string(),
+                    }))
+                }
             }
         };
 
         let api = self.api.lock().unwrap();
-        let mut results = Vec::new();
+        let mut results: Vec<crate::protocol::ElementInfo> = Vec::new();
+        let max_depth = req.max_depth;
 
-        let mut callback = |_depth: i32, ac: u64, info: &AccessibleContextInfo| {
+        let mut callback = |_depth: i32, ac: u64, info: &crate::bindings::AccessibleContextInfo| {
             let name = wide_to_string(&info.name);
             let role = wide_to_string(&info.role);
             let description = wide_to_string(&info.description);
             let states = wide_to_string(&info.states);
 
-            if let Some(ref role_str) = role
-                && locator.matches(
-                    role_str,
-                    name.as_deref(),
-                    description.as_deref(),
-                    states.as_deref(),
-                )
-            {
-                results.push(ElementInfo {
+            let role_str = if role.is_empty() { return true; } else { &role };
+
+            if locator.matches(
+                role_str,
+                if name.is_empty() { None } else { Some(name.as_str()) },
+                if description.is_empty() { None } else { Some(description.as_str()) },
+                if states.is_empty() { None } else { Some(states.as_str()) },
+            ) {
+                results.push(crate::protocol::ElementInfo {
                     context: ac,
-                    name,
-                    role,
-                    description,
-                    states,
+                    name: if name.is_empty() { None } else { Some(name) },
+                    role: if role.is_empty() { None } else { Some(role) },
+                    description: if description.is_empty() { None } else { Some(description) },
+                    states: if states.is_empty() { None } else { Some(states) },
                     x: info.x,
                     y: info.y,
                     width: info.width,
@@ -175,65 +117,108 @@ impl JabServer {
             true
         };
 
-        api.traverse_tree(vm_id, root, 0, 50, &mut callback);
+        api.traverse_tree(vm_id, root, 0, max_depth, &mut callback);
 
-        Ok(ResponseValue::FindElements(FindElementsValue {
-            elements: results,
+        Ok(Response::new(FindElementsResponse {
+            elements: results.iter().map(element_info_to_proto).collect(),
+            error: String::new(),
         }))
     }
 
-    fn click_element(&self, params: ClickElementParams) -> Result<ResponseValue, String> {
+    async fn click_element(
+        &self,
+        request: Request<ClickElementRequest>,
+    ) -> Result<Response<ClickElementResponse>, Status> {
+        let req = request.into_inner();
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
+
         if let Some(vm_id) = *vm {
-            api.request_focus(vm_id, params.context);
-            api.do_action(vm_id, params.context, "click");
-            Ok(ResponseValue::ClickElement(ClickElementValue {
-                status: "clicked".to_string(),
+            api.request_focus(vm_id, req.context);
+            api.do_action(vm_id, req.context, "click");
+            Ok(Response::new(ClickElementResponse {
+                success: true,
+                error: String::new(),
             }))
         } else {
-            Err("No window selected".to_string())
+            Ok(Response::new(ClickElementResponse {
+                success: false,
+                error: "No window selected".to_string(),
+            }))
         }
     }
 
-    fn type_text(&self, params: TypeTextParams) -> Result<ResponseValue, String> {
+    async fn type_text(
+        &self,
+        request: Request<TypeTextRequest>,
+    ) -> Result<Response<TypeTextResponse>, Status> {
+        let req = request.into_inner();
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
+
         if let Some(vm_id) = *vm {
-            api.set_text(vm_id, params.context, &params.text);
-            Ok(ResponseValue::TypeText(TypeTextValue {
-                status: "text set".to_string(),
+            api.set_text(vm_id, req.context, &req.text);
+            Ok(Response::new(TypeTextResponse {
+                success: true,
+                error: String::new(),
             }))
         } else {
-            Err("No window selected".to_string())
+            Ok(Response::new(TypeTextResponse {
+                success: false,
+                error: "No window selected".to_string(),
+            }))
         }
     }
 
-    fn get_element_text(&self, params: GetElementTextParams) -> Result<ResponseValue, String> {
+    async fn get_element_text(
+        &self,
+        request: Request<GetElementTextRequest>,
+    ) -> Result<Response<GetElementTextResponse>, Status> {
+        let req = request.into_inner();
         let api = self.api.lock().unwrap();
         let vm = self.current_vm_id.lock().unwrap();
+
         if let Some(vm_id) = *vm {
-            match api.get_text_range(vm_id, params.context, 0, 1024) {
-                Some(text) => Ok(ResponseValue::GetElementText(GetElementTextValue { text })),
-                None => Err("Failed to get text".to_string()),
+            match api.get_text_range(vm_id, req.context, 0, 1024) {
+                Some(text) => Ok(Response::new(GetElementTextResponse {
+                    text,
+                    error: String::new(),
+                })),
+                None => Ok(Response::new(GetElementTextResponse {
+                    text: String::new(),
+                    error: "Failed to get text".to_string(),
+                })),
             }
         } else {
-            Err("No window selected".to_string())
+            Ok(Response::new(GetElementTextResponse {
+                text: String::new(),
+                error: "No window selected".to_string(),
+            }))
         }
     }
 
-    fn get_version_info(&self) -> Result<ResponseValue, String> {
-        Ok(ResponseValue::VersionInfo(VersionInfoValue {
-            version: "1.0".to_string(),
+    async fn get_version_info(
+        &self,
+        _request: Request<GetVersionInfoRequest>,
+    ) -> Result<Response<GetVersionInfoResponse>, Status> {
+        Ok(Response::new(GetVersionInfoResponse {
+            version: env!("CARGO_PKG_VERSION").to_string(),
         }))
+    }
+
+    async fn list_windows(
+        &self,
+        _request: Request<ListWindowsRequest>,
+    ) -> Result<Response<ListWindowsResponse>, Status> {
+        Ok(Response::new(ListWindowsResponse { windows: Vec::new() }))
     }
 }
 
-fn wide_to_string(wide: &[u16]) -> Option<String> {
+fn wide_to_string(wide: &[u16]) -> String {
     let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
     if len == 0 {
-        None
+        String::new()
     } else {
-        String::from_utf16(&wide[..len]).ok()
+        String::from_utf16(&wide[..len]).unwrap_or_default()
     }
 }

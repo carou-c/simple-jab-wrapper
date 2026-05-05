@@ -3,30 +3,32 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+pub mod jab_wrapper {
+    include!(concat!(env!("OUT_DIR"), "/jab_wrapper.rs"));
+}
+
 mod jab_api;
 mod protocol;
 mod server;
+mod types;
 
-use protocol::RpcMethod;
 use server::JabServer;
-use std::env;
+use std::net::SocketAddr;
+use tonic::transport::Server;
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-
-    if args.len() > 1 && args[1] == "--schema" {
-        print_schema();
-        return;
-    }
-
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = 9250;
+    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
 
-    println!("Starting JAB Server...");
+    println!("Starting JAB gRPC Server on {}...", addr);
     let server = JabServer::new();
-    server.run(port);
-}
 
-fn print_schema() {
-    let schema = schemars::schema_for!(RpcMethod);
-    println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+    Server::builder()
+        .accept_http1(false)
+        .add_service(server.into_service())
+        .serve(addr)
+        .await?;
+
+    Ok(())
 }

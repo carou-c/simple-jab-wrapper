@@ -30,6 +30,14 @@ fn main() {
     println!("cargo:rerun-if-changed=native/AccessBridgeDebug.cpp");
     println!("cargo:rerun-if-changed=native/AccessBridgeCalls.c");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=proto/jab_wrapper.proto");
+
+    // 4. Compile protobuf
+    tonic_build::configure()
+        .build_server(true)
+        .build_client(true)
+        .compile_protos(&["proto/jab_wrapper.proto"], &["proto"])
+        .expect("Failed to compile protobuf");
 
     // let target = std::env::var("TARGET").unwrap();
     // println!("{}", target);

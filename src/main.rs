@@ -3,8 +3,8 @@ mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-mod protocol;
 mod jab_api;
+mod protocol;
 mod server;
 
 use protocol::RpcMethod;
@@ -19,10 +19,7 @@ fn main() {
         return;
     }
 
-    let port = env::var("JAB_SERVER_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9250);
+    let port = 9250;
 
     println!("Starting JAB Server...");
     let server = JabServer::new();
@@ -33,4 +30,3 @@ fn print_schema() {
     let schema = schemars::schema_for!(RpcMethod);
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
 }
-

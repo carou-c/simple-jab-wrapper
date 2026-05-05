@@ -36,7 +36,7 @@
 #include <jni.h>
 
 
-//#define ACCESSBRIDGE_32
+#define ACCESSBRIDGE_ARCH_32
 //#define ACCESSBRIDGE_64
 
 #include "AccessBridgeCalls.h"
@@ -62,11 +62,14 @@ extern "C" {
     BOOL initializeAccessBridge() {
 
 #ifdef ACCESSBRIDGE_ARCH_32 // For 32bit AT new bridge
+        printf("Using 32-bit\n");
         theAccessBridgeInstance = LoadLibrary("WINDOWSACCESSBRIDGE-32");
 #else
 #ifdef ACCESSBRIDGE_ARCH_64 // For 64bit AT new bridge
-                theAccessBridgeInstance = LoadLibrary("WINDOWSACCESSBRIDGE-64");
+        printf("Using 64-bit\n");
+        theAccessBridgeInstance = LoadLibrary("WINDOWSACCESSBRIDGE-64");
 #else // legacy
+        printf("Using legacy\n");
         theAccessBridgeInstance = LoadLibrary("WINDOWSACCESSBRIDGE");
 #endif
 #endif

@@ -2,6 +2,7 @@ use crate::bindings::*;
 use std::os::windows::ffi::OsStrExt;
 use std::ffi::OsStr;
 
+#[derive(Debug)]
 pub struct JabApi {
     initialized: bool,
 }
@@ -11,7 +12,7 @@ impl JabApi {
         unsafe {
             let ok = initializeAccessBridge();
             if ok == 0 {
-                eprintln!("Warning: initializeAccessBridge returned false");
+                eprintln!("Warning: initializeAccessBridge returned {}", ok);
             }
             JabApi { initialized: ok != 0 }
         }

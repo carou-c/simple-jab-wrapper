@@ -5,6 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug)]
 pub struct JabServer {
     api: Arc<Mutex<JabApi>>,
     current_vm_id: Arc<Mutex<Option<i32>>>,

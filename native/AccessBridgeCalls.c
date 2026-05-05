@@ -73,7 +73,9 @@ extern "C" {
         theAccessBridgeInstance = LoadLibrary("WINDOWSACCESSBRIDGE");
 #endif
 #endif
+
         if (theAccessBridgeInstance != 0) {
+            printf("Access bridge DLL loaded successfully\n");
             LOAD_FP(Windows_run, Windows_runFP, "Windows_run");
 
             LOAD_FP(SetJavaShutdown, SetJavaShutdownFP, "setJavaShutdownFP");
@@ -216,8 +218,10 @@ extern "C" {
 
             theAccessBridgeInitializedFlag = TRUE;
             PrintDebugString("theAccessBridgeInitializedFlag = TRUE");
+            printf("Access bridge initialized successfully\n");
             return TRUE;
         } else {
+            printf("Access bridge DLL not loaded successfully\n");
             return FALSE;
         }
     }

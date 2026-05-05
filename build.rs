@@ -2,6 +2,7 @@ use std::env;
 use std::path::PathBuf;
 
 const JAVA_HOME: &str = "/usr/lib/jvm/java-8-openjdk";
+const MINGW_SYSROOT: &str = "/usr/i686-w64-mingw32";
 
 fn main() {
     // 1. Compile the C code
@@ -14,7 +15,11 @@ fn main() {
         .include("native") // for headers
         .file("native/AccessBridgeCalls.c")
         .file("native/AccessBridgeDebug.cpp")
-        .compile("accessbridgecalls"); // produces libaccessbridgecalls.a
+        .compile("accessbridge"); // produces libaccessbridge.a
+
+    println!("cargo:rustc-link-search=native={}/lib", MINGW_SYSROOT);
+    println!("cargo:rustc-link-lib=static=accessbridge");
+    println!("cargo:rustc-link-lib=static=stdc++");
 
     // 2. Tell cargo to rerun if headers, C src, or build.rs change
     println!("cargo:rerun-if-changed=native/AccessBridgeDebug.h");
